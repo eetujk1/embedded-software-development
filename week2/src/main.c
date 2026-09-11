@@ -1,8 +1,14 @@
+// Tavoitepistemäärä: 2 pistettä
+// Toteutettu UART-sekvenssin vastaanotto, dispatcher,
+// condition variablet, värikohtaiset FIFO-puskurit,
+// release-signaali sekä ajastus.
+
 #include <zephyr/kernel.h> 
 #include <zephyr/sys/printk.h> 
 #include <zephyr/device.h> 
 #include <zephyr/drivers/gpio.h> 
 #include <zephyr/drivers/uart.h>
+#include <stdlib.h>
 
  
 // Led pin configurations 
@@ -19,7 +25,7 @@ static struct gpio_callback button_0_data;
 */
 
  
-// Red led thread initialization 
+// Led thread initialization 
 #define STACKSIZE 500 
 #define PRIORITY 5 
 
@@ -27,6 +33,8 @@ static struct gpio_callback button_0_data;
 #define UART_DEVICE_NODE DT_CHOSEN(zephyr_shell_uart)
 static const struct device *const uart_dev = DEVICE_DT_GET(UART_DEVICE_NODE);
 
+
+// declarations of signals
 K_MUTEX_DEFINE(thread_mutex);
 K_MUTEX_DEFINE(release_mutex);
 K_CONDVAR_DEFINE(release_signal);
@@ -35,10 +43,12 @@ K_CONDVAR_DEFINE(green_signal);
 K_CONDVAR_DEFINE(yellow_signal);
 
 
- 
+ // declarations of LED tasks
 void red_led_task(void *, void *, void *); 
 void green_led_task(void *, void *, void *); 
 void yellow_led_task(void *, void *, void *); 
+
+int init_led(void); 
 
 /* void button_0_handler(const struct device *dev, 
                       struct gpio_callback *cb, 
@@ -46,18 +56,20 @@ void yellow_led_task(void *, void *, void *);
 
 */
 
-int init_led(void); 
-
 // int init_button(void); 
 //int state = 0; 
 //int previous_state = 0; 
- 
+
+// Declaration of LED threads
 K_THREAD_DEFINE(red_thread,STACKSIZE,red_led_task,NULL,NULL,NULL,PRIORITY,0,0); 
 K_THREAD_DEFINE(green_thread, STACKSIZE, green_led_task, NULL, NULL, NULL, PRIORITY, 0, 0); 
 K_THREAD_DEFINE(yellow_thread, STACKSIZE, yellow_led_task, NULL, NULL, NULL, PRIORITY, 0, 0); 
 
-// Create dispatcher FIFO buffer
+// Create  FIFO buffers
 K_FIFO_DEFINE(dispatcher_fifo);
+K_FIFO_DEFINE(red_fifo);
+K_FIFO_DEFINE(yellow_fifo);
+K_FIFO_DEFINE(green_fifo);
 
 // FIFO dispatcher data type
 struct data_t {
@@ -65,8 +77,14 @@ struct data_t {
 	// Add fifo_reserved below
 	*************************/
 	void *fifo_reserved;
-	char msg[20];
+	char msg[50];
 };
+
+struct led_data_t {
+	void *fifo_reserved;
+	int time;
+};
+
 
 int init_uart(void) {
 	// UART initialization
@@ -154,9 +172,6 @@ static void uart_task(void *unused1, void *unused2, void *unused3)
 				uart_msg_cnt = 0;
 				memset(uart_msg,0,20);
 
-				// Clear UART message buffer
-				uart_msg_cnt = 0;
-				memset(uart_msg,0,20);
 			}
 		}
 		k_msleep(10);
@@ -175,7 +190,7 @@ static void dispatcher_task(void *unused1, void *unused2, void *unused3)
 
 		printk("Dispatcher: %s\n", sequence);
 
-		int cnt = 0;
+		/* int cnt = 0;
 		while (sequence[cnt] != 0) {
 			if(sequence[cnt] == 'R') {
 				k_condvar_broadcast(&red_signal);
@@ -191,12 +206,37 @@ static void dispatcher_task(void *unused1, void *unused2, void *unused3)
 
 			k_condvar_wait(&release_signal, &release_mutex, K_FOREVER);
 		}
-        // You need to:
+		*/
+
         // Parse color and time from the fifo data
-        // Example
-        //    char color = sequence[0];
-        //    int time = atoi(sequence+2);
-		//    printk("Data: %c %d\n", color, time);
+			char color = sequence[0];
+			int time = 1000;   
+
+			if (sequence[1] == ',') {
+				time = atoi(sequence+2);
+}
+		    printk("Data: %c %d\n", color, time);
+
+			struct led_data_t *led_data =
+        	k_malloc(sizeof(struct led_data_t));
+
+			led_data->time = time;
+
+			if(color == 'R') {
+				k_fifo_put(&red_fifo, led_data);
+				k_condvar_broadcast(&red_signal);
+        }
+			
+			if(color == 'Y') {
+				k_fifo_put(&yellow_fifo, led_data);
+				k_condvar_broadcast(&yellow_signal);
+			}
+			if(color == 'G') {
+				k_fifo_put(&green_fifo, led_data);
+				k_condvar_broadcast(&green_signal);
+			}
+			k_condvar_wait(&release_signal, &release_mutex, K_FOREVER);
+
         // Send the parsed color information to tasks using fifo
         // Use release signal to control sequence or k_yield
 	}
@@ -209,60 +249,67 @@ K_THREAD_DEFINE(uart_thread,STACKSIZE,uart_task,NULL,NULL,NULL,PRIORITY,0,0);
 void red_led_task(void *, void *, void*) { 
 	while (true) {
 		k_condvar_wait(&red_signal, &thread_mutex, K_FOREVER);
+		
+		struct led_data_t *red_data = k_fifo_get(&red_fifo, K_FOREVER);
+		
 		gpio_pin_set_dt(&red,1); 
 		printk("Red on\n"); 
 	
-		k_sleep(K_SECONDS(1)); 
+		k_msleep(red_data->time);
 	
 		
 		gpio_pin_set_dt(&red,0); 
 		printk("Red off\n"); 
-	
+		k_free(red_data);
 		k_sleep(K_SECONDS(1)); 
-
 		k_condvar_signal(&release_signal);
 
 	}
 }  
- 
+// Green led task
 void green_led_task(void *, void *, void *) { 
 	printk("Green LED thread started\n"); 
  
 	while (true) { 
 		k_condvar_wait(&green_signal, &thread_mutex, K_FOREVER);
-			gpio_pin_set_dt(&green,1); 
-			printk("Green on\n"); 
- 
-			k_sleep(K_SECONDS(1)); 
- 
-			gpio_pin_set_dt(&green,0); 
-			printk("Green off\n"); 
- 
-			k_sleep(K_SECONDS(1)); 
+		struct led_data_t *green_data = k_fifo_get(&green_fifo, K_FOREVER);
+		
+		gpio_pin_set_dt(&green,1); 
+		printk("Green on\n"); 
 
-			k_condvar_signal(&release_signal);
+		k_msleep(green_data->time);
+ 
+		gpio_pin_set_dt(&green,0); 
+		printk("Green off\n"); 
+		k_free(green_data);
+		k_sleep(K_SECONDS(1)); 
+		k_condvar_signal(&release_signal);
 
 	} 
 
 }
+// Yellow led task
 void yellow_led_task(void *, void *, void *) { 
 	printk("Yellow LED thread started\n"); 
  
 	while (true) { 
-		k_condvar_wait(&yellow_signal, &thread_mutex, K_FOREVER);
+		k_condvar_wait(&yellow_signal, &thread_mutex, K_FOREVER); 
+		struct led_data_t *yellow_data = k_fifo_get(&yellow_fifo, K_FOREVER);
+		
 		gpio_pin_set_dt(&red,1);
 		gpio_pin_set_dt(&green,1);
 		
 		printk("Yellow on\n"); 
  
-		k_sleep(K_SECONDS(1)); 
+		k_msleep(yellow_data->time);
  
 		gpio_pin_set_dt(&red,0);
 		gpio_pin_set_dt(&green,0);
 		printk("Yellow off\n"); 
- 
-		k_sleep(K_SECONDS(1)); 
 
+		k_free(yellow_data);
+		
+		k_sleep(K_SECONDS(1)); 
 		k_condvar_signal(&release_signal);
 
 	} 
