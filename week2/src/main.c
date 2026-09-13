@@ -2,6 +2,8 @@
 // Toteutettu UART-sekvenssin vastaanotto, dispatcher,
 // condition variablet, värikohtaiset FIFO-puskurit,
 // release-signaali sekä ajastus.
+// Button-ohjaus säilytetty aiemmasta viikkotehtävästä,
+// mutta sitä ei tässä tehtävässä käytetä, joten se on kommentoitu pois.
 
 #include <zephyr/kernel.h> 
 #include <zephyr/sys/printk.h> 
@@ -162,7 +164,6 @@ static void uart_task(void *unused1, void *unused2, void *unused3)
 					return;
 				}
 				// Copy UART message to dispatcher data
-				// strncpy(buf->msg, 20, uart_msg); // mitä ihmettä, miksi kaatuu!!
 				snprintf(buf->msg, 20, "%s", uart_msg);
 
 				// You need to:
@@ -207,35 +208,31 @@ static void dispatcher_task(void *unused1, void *unused2, void *unused3)
 			k_condvar_wait(&release_signal, &release_mutex, K_FOREVER);
 		}
 		*/
-
         // Parse color and time from the fifo data
-			char color = sequence[0];
-			int time = 1000;   
+		char color = sequence[0];
+		int time = atoi(sequence + 2);
 
-			if (sequence[1] == ',') {
-				time = atoi(sequence+2);
-}
-		    printk("Data: %c %d\n", color, time);
+		printk("Data: %c %d\n", color, time);
 
-			struct led_data_t *led_data =
-        	k_malloc(sizeof(struct led_data_t));
+		struct led_data_t *led_data =
+        k_malloc(sizeof(struct led_data_t));
 
-			led_data->time = time;
+		led_data->time = time;
 
-			if(color == 'R') {
-				k_fifo_put(&red_fifo, led_data);
-				k_condvar_broadcast(&red_signal);
+		if(color == 'R') {
+			k_fifo_put(&red_fifo, led_data);
+			k_condvar_broadcast(&red_signal);
         }
 			
-			if(color == 'Y') {
-				k_fifo_put(&yellow_fifo, led_data);
-				k_condvar_broadcast(&yellow_signal);
-			}
-			if(color == 'G') {
-				k_fifo_put(&green_fifo, led_data);
-				k_condvar_broadcast(&green_signal);
-			}
-			k_condvar_wait(&release_signal, &release_mutex, K_FOREVER);
+		if(color == 'Y') {
+			k_fifo_put(&yellow_fifo, led_data);
+			k_condvar_broadcast(&yellow_signal);
+		}
+		if(color == 'G') {
+			k_fifo_put(&green_fifo, led_data);
+			k_condvar_broadcast(&green_signal);
+		}
+		k_condvar_wait(&release_signal, &release_mutex, K_FOREVER);
 
         // Send the parsed color information to tasks using fifo
         // Use release signal to control sequence or k_yield
