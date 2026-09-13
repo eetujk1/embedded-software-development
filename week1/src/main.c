@@ -1,3 +1,7 @@
+// pistetavoite: 2 pistettä.
+// Toteutettu valosekvenssin pause-toiminto napilla
+// Toisen painalluksen jälkeen sekvenssi jatkuu samasta kohdasta kuin ennen pysäytystä
+
 #include <zephyr/kernel.h> 
 #include <zephyr/sys/printk.h> 
 #include <zephyr/device.h> 
