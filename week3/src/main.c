@@ -11,13 +11,12 @@ static const struct gpio_dt_spec red = GPIO_DT_SPEC_GET(DT_ALIAS(led0), gpios);
 static const struct gpio_dt_spec green = GPIO_DT_SPEC_GET(DT_ALIAS(led1), gpios); 
 static const struct gpio_dt_spec blue = GPIO_DT_SPEC_GET(DT_ALIAS(led2), gpios); 
 
-/*
+
 #define BUTTON_0 DT_ALIAS(sw0) 
  
 static const struct gpio_dt_spec button_0 = GPIO_DT_SPEC_GET_OR(BUTTON_0, gpios, {0}); 
 static struct gpio_callback button_0_data; 
 
-*/
 
  
 // Led thread initialization 
@@ -49,17 +48,18 @@ uint64_t red_time = 0;
 uint64_t yellow_time = 0;
 uint64_t green_time = 0;
 uint64_t total_time = 0;
+
 int init_led(void); 
 
-/* void button_0_handler(const struct device *dev, 
+void button_0_handler(const struct device *dev, 
                       struct gpio_callback *cb, 
                       uint32_t pins); 
 
-*/
 
-// int init_button(void); 
-//int state = 0; 
-//int previous_state = 0; 
+
+int init_button(void); 
+int state = 0; 
+int previous_state = 0; 
 
 // Declaration of LED threads
 K_THREAD_DEFINE(red_thread,STACKSIZE,red_led_task,NULL,NULL,NULL,PRIORITY,0,0); 
@@ -98,9 +98,10 @@ int init_uart(void) {
 // Main program 
 int main(void) 
 { 
+	timing_init();
 	init_uart();
 	init_led(); 
-	timing_init();
+	
 	// init_button(); 
 		
  
@@ -181,71 +182,80 @@ static void uart_task(void *unused1, void *unused2, void *unused3)
 	return;
 }
  
-static void dispatcher_task(void *unused1, void *unused2, void *unused3)
-{
-	while (true) {
-		// Receive dispatcher data from uart_task fifo
-		struct data_t *rec_item = k_fifo_get(&dispatcher_fifo, K_FOREVER);
-		char sequence[20];
-		memcpy(sequence,rec_item->msg,20);
-		k_free(rec_item);
+static void dispatcher_task(void *unused1, void *unused2, void *unused3) 
+{ 
+	while (true) { 
+		struct data_t *rec_item = k_fifo_get(&dispatcher_fifo, K_FOREVER); 
+		char sequence[20]; 
+		memcpy(sequence, rec_item->msg, 20); 
+		k_free(rec_item); 
 
-		printk("Dispatcher: %s\n", sequence);
+		printk("Dispatcher: %s\n", sequence); 
 
-		int cnt = 0;
-		while (sequence[cnt] != 0) {
-			if(sequence[cnt] == 'R') {
-				k_condvar_broadcast(&red_signal);
-			}
-			
-			if(sequence[cnt] == 'Y') {
-				k_condvar_broadcast(&yellow_signal);
-			}
-			if(sequence[cnt] == 'G') {
-				k_condvar_broadcast(&green_signal);
-			}
-			cnt++;
+		if (strchr(sequence, ',') == NULL) { 
+			int cnt = 0; 
+			while (sequence[cnt] != 0) { 
+				
+				struct led_data_t *led_data = 
+					k_malloc(sizeof(struct led_data_t)); 
 
-			k_condvar_wait(&release_signal, &release_mutex, K_FOREVER);
+				led_data->time = 1000; 
 
+				if (sequence[cnt] == 'R') { 
+					k_fifo_put(&red_fifo, led_data);
+					k_condvar_broadcast(&red_signal); 
+				} 
+				
+				if (sequence[cnt] == 'Y') { 
+					k_fifo_put(&yellow_fifo, led_data);
+					k_condvar_broadcast(&yellow_signal); 
+				} 
+
+				if (sequence[cnt] == 'G') { 
+					k_fifo_put(&green_fifo, led_data);
+					k_condvar_broadcast(&green_signal); 
+				} 
+
+				cnt++; 
+
+				k_condvar_wait(&release_signal, &release_mutex, K_FOREVER); 
+			} 
+
+			printk("Total time: %llu us\n", total_time);
+			total_time = 0;
 		}
+		 
+		else { 
+			char color = sequence[0]; 
+			int time = atoi(sequence + 2); 
 
-		printk("Total sequence time (debug ON): %llu\n", total_time);
+			printk("Data: %c %d\n", color, time); 
 
-		total_time = 0;
-		/*
-        // Parse color and time from the fifo data
-		char color = sequence[0];
-		int time = atoi(sequence + 2);
+			struct led_data_t *led_data = 
+				k_malloc(sizeof(struct led_data_t)); 
 
-		printk("Data: %c %d\n", color, time);
+			led_data->time = time; 
 
-		struct led_data_t *led_data =
-        k_malloc(sizeof(struct led_data_t));
+			if (color == 'R') { 
+				k_fifo_put(&red_fifo, led_data); 
+				k_condvar_broadcast(&red_signal); 
+			} 
+			 
+			if (color == 'Y') { 
+				k_fifo_put(&yellow_fifo, led_data); 
+				k_condvar_broadcast(&yellow_signal); 
+			} 
 
-		led_data->time = time;
+			if (color == 'G') { 
+				k_fifo_put(&green_fifo, led_data); 
+				k_condvar_broadcast(&green_signal); 
+			} 
 
-		if(color == 'R') {
-			k_fifo_put(&red_fifo, led_data);
-			k_condvar_broadcast(&red_signal);
-        }
-			
-		if(color == 'Y') {
-			k_fifo_put(&yellow_fifo, led_data);
-			k_condvar_broadcast(&yellow_signal);
-		}
-		if(color == 'G') {
-			k_fifo_put(&green_fifo, led_data);
-			k_condvar_broadcast(&green_signal);
-		}
-		k_condvar_wait(&release_signal, &release_mutex, K_FOREVER);
-
-		
-        // Send the parsed color information to tasks using fifo
-        // Use release signal to control sequence or k_yield */
-	}
-		
+			k_condvar_wait(&release_signal, &release_mutex, K_FOREVER); 
+		} 
+	} 	
 }
+
 
 K_THREAD_DEFINE(dis_thread,STACKSIZE,dispatcher_task,NULL,NULL,NULL,PRIORITY,0,0);
 K_THREAD_DEFINE(uart_thread,STACKSIZE,uart_task,NULL,NULL,NULL,PRIORITY,0,0);
@@ -259,17 +269,17 @@ void red_led_task(void *, void *, void*) {
 		timing_start();
 		timing_t red_start_time = timing_counter_get();
 		
-		// struct led_data_t *red_data = k_fifo_get(&red_fifo, K_FOREVER);
+		struct led_data_t *red_data = k_fifo_get(&red_fifo, K_FOREVER);
 		
 		gpio_pin_set_dt(&red,1); 
 		printk("Red on\n"); 
 	
-		// k_msleep(red_data->time);
-		k_sleep(K_SECONDS(1)); 
+		k_msleep(red_data->time);
+
 		
 		gpio_pin_set_dt(&red,0); 
 		printk("Red off\n"); 
-		//k_free(red_data);
+		k_free(red_data);
 		k_sleep(K_SECONDS(1)); 
 
 		timing_t red_end_time = timing_counter_get();
@@ -293,17 +303,17 @@ void green_led_task(void *, void *, void *) {
 
 		timing_start();
 		timing_t green_start_time = timing_counter_get();
+
+		struct led_data_t *green_data = k_fifo_get(&green_fifo, K_FOREVER);
 	
 		gpio_pin_set_dt(&green,1); 
 		printk("Green on\n"); 
 
-		// k_msleep(green_data->time);
-
-		k_sleep(K_SECONDS(1)); 
+		k_msleep(green_data->time);
  
 		gpio_pin_set_dt(&green,0); 
 		printk("Green off\n"); 
-		//k_free(green_data);
+		k_free(green_data);
 		k_sleep(K_SECONDS(1)); 
 
 		timing_t green_end_time = timing_counter_get();
@@ -330,21 +340,20 @@ void yellow_led_task(void *, void *, void *) {
 		timing_start();
 		timing_t yellow_start_time = timing_counter_get();
 
-		//struct led_data_t *yellow_data = k_fifo_get(&yellow_fifo, K_FOREVER);
+		struct led_data_t *yellow_data = k_fifo_get(&yellow_fifo, K_FOREVER);
 		
 		gpio_pin_set_dt(&red,1);
 		gpio_pin_set_dt(&green,1);
 		
 		printk("Yellow on\n"); 
  
-		//k_msleep(yellow_data->time);
-		k_sleep(K_SECONDS(1)); 
+		k_msleep(yellow_data->time);
  
 		gpio_pin_set_dt(&red,0);
 		gpio_pin_set_dt(&green,0);
 		printk("Yellow off\n"); 
 
-		//k_free(yellow_data);
+		k_free(yellow_data);
 		
 		k_sleep(K_SECONDS(1)); 
 		
@@ -362,7 +371,7 @@ void yellow_led_task(void *, void *, void *) {
 
 }
 
-/*
+
 int init_button() { 
  
 	int ret; 
@@ -405,4 +414,4 @@ void button_0_handler(const struct device *dev, struct gpio_callback *cb, uint32
 	printk("Button pressed\n"); 
  
 }
-*/
+
