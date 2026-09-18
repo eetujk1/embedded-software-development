@@ -1,3 +1,10 @@
+// Tavoitepistemäärä: 1 piste.
+// Tehty mittaukset debugit päällä ja ilman
+// Kuvakaappaukset löytyvät kansiosta
+
+
+
+
 #include <zephyr/kernel.h> 
 #include <zephyr/sys/printk.h> 
 #include <zephyr/device.h> 
